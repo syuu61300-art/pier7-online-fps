@@ -54,7 +54,7 @@ async function start(hotData) {
   const net = { t: null, state: onlineKind() ? 'idle' : 'none', err: '', pending: null, attempt: 0 };
   let pickMode = settings.mode;
   function ensureNet() {
-    if (net.state === 'none') return Promise.reject(new Error('このページはファイルとして開かれているため、オンライン対戦はできません。サーバー経由で開いてください。'));
+    if (net.state === 'none') return Promise.reject(new Error('このブラウザではオンライン対戦ができません。'));
     if (net.t && net.t.connected()) return Promise.resolve(net.t);
     if (net.pending) return net.pending;
     net.state = 'connecting'; net.err = '';
@@ -80,10 +80,10 @@ async function start(hotData) {
     el.textContent = '';
     const dot = document.createElement('span');
     const txt = document.createElement('span');
-    const kindName = net.t ? (net.t.kind === 'claude' ? 'このページのオンライン機能' : 'ゲームサーバー') : '';
+    const kindName = net.t ? (net.t.kind === 'claude' ? 'このページのオンライン機能' : net.t.kind === 'mqtt' ? `公開中継サーバー（${net.t.label}）` : 'ゲームサーバー') : '';
     if (net.state === 'ok') { dot.className = 'dot ok'; txt.textContent = `オンライン — ${kindName}に接続中`; }
     else if (net.state === 'connecting' || net.state === 'idle') { dot.className = 'dot warn'; txt.textContent = net.attempt > 1 ? `オンラインに接続中…（${net.attempt}回目）` : 'オンラインに接続中…'; }
-    else if (net.state === 'none') { dot.className = 'dot bad'; txt.textContent = 'オンライン不可（ファイルとして開いています）— オフラインのBotマッチは遊べます'; }
+    else if (net.state === 'none') { dot.className = 'dot bad'; txt.textContent = 'オンライン不可（このブラウザは未対応）— オフラインのBotマッチは遊べます'; }
     else { dot.className = 'dot bad'; txt.textContent = `オンラインに接続できません — ${net.err || ''}`; }
     el.append(dot, txt);
     $('netRetry').hidden = net.state !== 'fail';
@@ -379,6 +379,7 @@ async function start(hotData) {
       job = null;
       show(null);
       game.input.enabled = true;
+      game.interpDelay = (online && net.t && net.t.interpDelay) || 0;
       await game.start(online ? 'online' : 'offline', room, { roomId: plan.roomId, lobbyName: plan.lobbyName, transport: online ? net.t : null });
     };
     if (touch || game.input.touch || game.input.locked || game.input.freeMouse) { await go(); return; }
