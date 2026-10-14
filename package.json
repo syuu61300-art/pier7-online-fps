@@ -1,0 +1,21 @@
+{
+  "name": "pier7",
+  "version": "2.0.0",
+  "private": true,
+  "description": "PIER 7 — browser FPS (three.js) with online rooms over WebSocket",
+  "type": "module",
+  "scripts": {
+    "start": "node server/server.js",
+    "build:artifact": "node tools/build-artifact.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.24.0",
+    "three": "0.170.0"
+  }
+}

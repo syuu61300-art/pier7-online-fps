@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>PIER 7</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800;900&family=IBM+Plex+Mono:wght@500;600&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
+<style>
+  /* minimal look for the boot screen in case css/style.css cannot be loaded */
+  html, body { margin: 0; height: 100%; background: #0d1418; color: #ece4d2; font-family: system-ui, sans-serif; }
+  #game { position: fixed; inset: 0; width: 100%; height: 100%; }
+  #boot { position: fixed; inset: 0; display: grid; place-items: center; text-align: center; padding: 16px; }
+</style>
+<link rel="stylesheet" href="css/style.css">
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js",
+    "three/examples/jsm/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<!-- 1. boot -->
+<div id="boot" class="screen">
+  <div class="boot-inner">
+    <div class="boot-kicker">BROWSER FPS · FREE FOR ALL</div>
+    <div class="boot-logo">PIER <span>7</span></div>
+    <div class="boot-bar"><i id="bootBar"></i></div>
+    <div class="boot-msg" id="bootMsg">読み込み中…</div>
+    <button class="boot-start" id="bootStart" type="button" hidden>クリックして開始</button>
+  </div>
+  <div class="boot-foot" id="bootFoot">マップ5種 · オンライン対戦 · Botマッチ</div>
+</div>
+
+<!-- 2. lobby -->
+<div id="lobby" class="screen" hidden>
+  <div class="lb-wrap">
+    <header class="lb-top">
+      <div class="lb-brand">PIER <span>7</span></div>
+      <div class="status" id="netStatus"><span class="dot"></span><span>接続を確認中…</span></div>
+      <button class="btn sm" id="netRetry" type="button" hidden>再接続</button>
+      <button class="btn" id="openSettings" type="button">設定</button>
+    </header>
+    <div class="lb-grid">
+      <section class="lb-card">
+        <div class="field">
+          <label class="label" for="nameIn">コールサイン</label>
+          <input id="nameIn" class="text-in" maxlength="14" autocomplete="off" spellcheck="false" placeholder="例: カモメ">
+        </div>
+        <div class="field">
+          <span class="label">メイン武器</span>
+          <div class="wcards" id="wcards"></div>
+          <div class="wdetail" id="wdetail"></div>
+        </div>
+        <details class="more">
+          <summary>操作方法</summary>
+          <div class="keys" id="keyHelp"></div>
+        </details>
+      </section>
+      <section class="lb-card">
+        <div class="lb-head"><h2>オンラインのロビー</h2><span class="fineprint" id="lobbyMeta"></span></div>
+        <div class="rooms" id="roomList"></div>
+        <button class="deploy" id="createBtn" type="button"><span>ロビーを作成</span><small>オンライン / オフライン</small></button>
+        <div class="fineprint">ロビーを作るときに、オンライン（ほかのプレイヤーと対戦）かオフライン（Botマッチ）を選べます。一覧のロビーを押すと参加できます。</div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<!-- 3. create lobby -->
+<div id="create" class="screen" hidden>
+  <div class="cr-card">
+    <div class="cr-head"><button class="btn" id="crBack" type="button">← 戻る</button><h2>ロビーを作成</h2></div>
+    <div class="field">
+      <label class="label" for="lobbyNameIn">ロビー名</label>
+      <input id="lobbyNameIn" class="text-in" maxlength="24" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="field">
+      <span class="label">マップ</span>
+      <div class="maps" id="mapCards"></div>
+    </div>
+    <div class="field">
+      <span class="label">モード</span>
+      <div class="modes">
+        <button class="mode" id="modeOnline" type="button" aria-pressed="true"><b>オンライン</b><small>ほかのプレイヤーと対戦。足りない人数はBotが埋めます。</small><em id="modeOnlineState"></em></button>
+        <button class="mode" id="modeOffline" type="button" aria-pressed="false"><b>オフライン（Botマッチ）</b><small>ネットに繋がずにBotと対戦します。</small><em>いつでも可</em></button>
+      </div>
+    </div>
+    <div class="row between"><span class="label">Bot数</span><div class="seg" id="segBots"></div></div>
+    <div class="row between"><span class="label">Botの強さ</span><div class="seg" id="segDiff"></div></div>
+    <button class="deploy" id="crGo" type="button"><span>作成して出撃</span><small id="crGoSub"></small></button>
+  </div>
+</div>
+
+<!-- 4. connect -->
+<div id="connect" class="screen" hidden>
+  <div class="cn-card">
+    <div class="cn-kind" id="cnKind">ONLINE</div>
+    <h2 id="cnTitle">オンラインサーバーに接続中…</h2>
+    <div class="cn-map" id="cnMap"></div>
+    <ol class="cn-steps" id="cnSteps"></ol>
+    <div class="cn-err" id="cnErr" hidden></div>
+    <div class="btnrow">
+      <button class="btn" id="cnBack" type="button">ロビーに戻る</button>
+      <button class="btn" id="cnRetry" type="button" hidden>再試行</button>
+      <button class="btn primary" id="cnGo" type="button" hidden>出撃</button>
+    </div>
+  </div>
+</div>
+
+<div id="hud" class="layer" hidden>
+  <div id="vignette"></div>
+  <div id="suppress"></div>
+  <div id="spawnshield"></div>
+  <div id="scope"><div class="ring"></div><div class="h"></div><div class="v"></div><div class="mil" id="mil"></div><div class="rdot"></div></div>
+  <div class="cross" id="cross"><i class="c-t"></i><i class="c-b"></i><i class="c-l"></i><i class="c-r"></i><i class="c-d"></i></div>
+  <div id="hitmark"><i></i><i></i><i></i><i></i></div>
+  <div id="dmgind"></div>
+  <div id="reloadbar"><i></i></div>
+  <div id="hint"></div>
+
+  <div class="corner" id="minimap"><canvas id="mmc" width="340" height="340"></canvas><div class="mm-meta"><span id="kd">0 / 0</span><span id="rank">—</span></div></div>
+  <div id="netpill"><span class="dot" id="netdot"></span><span id="nettext">OFFLINE</span></div>
+  <div class="corner" id="matchbar"><div class="timer mono" id="timer">08:00</div><div class="lead" id="lead"></div></div>
+  <div class="corner" id="killfeed"></div>
+  <div id="toasts"></div>
+  <div class="corner" id="chat"><div id="chatlog"></div><div id="chatbox" hidden><input id="chatin" maxlength="80" autocomplete="off" placeholder="メッセージ（Enterで送信 / Escで閉じる）"></div></div>
+
+  <div class="corner" id="hp"><div class="num mono" id="hpnum">100<small>HP</small></div><div class="hbar"><i id="hpbar" style="width:100%"></i></div></div>
+  <div class="corner" id="ammo">
+    <div class="nades" id="nades">◆◆ グレネード</div>
+    <div class="wname" id="wname">KR-7</div>
+    <div class="count mono" id="ammocount"><span class="mag">30</span><span class="res">/ 150</span></div>
+    <div class="slots" id="slots"><span class="slot on">1 主</span><span class="slot">2 副</span><span class="slot">3 刃</span></div>
+  </div>
+  <div id="fps" hidden></div>
+
+  <div id="scoreboard" hidden><div class="sb-title"><b>スコア</b><span id="sbmeta"></span></div><table class="sbt"><thead><tr><th>#</th><th>プレイヤー</th><th>キル</th><th>デス</th><th>K/D</th></tr></thead><tbody id="sbbody"></tbody></table></div>
+
+  <div class="overlay" id="death" hidden>
+    <div class="card">
+      <h2>撃破された</h2>
+      <div class="sub" id="deathBy"></div>
+      <div class="label">次の出撃で使う武器</div>
+      <div class="lo-grid" id="deathLoadout"></div>
+      <div class="respawn" id="respawnTxt"></div>
+    </div>
+  </div>
+
+  <div class="overlay" id="roundend" hidden>
+    <div class="card">
+      <div class="label">マッチ終了</div>
+      <h2 id="reTitle"></h2>
+      <table class="sbt"><thead><tr><th>#</th><th>プレイヤー</th><th>キル</th><th>デス</th><th>K/D</th></tr></thead><tbody id="rebody"></tbody></table>
+      <div class="respawn" id="reNext"></div>
+    </div>
+  </div>
+
+  <div class="overlay" id="pause" hidden>
+    <div class="card">
+      <h2>一時停止</h2>
+      <div class="sub" id="pauseSub">オンライン中はゲームは止まりません。</div>
+      <div class="btnrow">
+        <button class="btn primary" id="resumeBtn">戻る</button>
+        <button class="btn" id="pauseSettings">設定</button>
+        <button class="btn danger" id="leaveBtn">ロビーに戻る</button>
+      </div>
+    </div>
+  </div>
+</div>
+<div id="touch"></div>
+
+<div id="settings" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="setTitle">
+  <div class="set-card">
+    <div class="set-head"><h2 id="setTitle">設定</h2><button class="btn" id="setClose" type="button">閉じる</button></div>
+    <div class="set-tabs" role="tablist" id="setTabs"></div>
+    <div class="set-body" id="setBody"></div>
+    <div class="set-foot">公平にするため、反動・武器の性能・移動速度は誰も変更できません。視野角は65〜90°の範囲で、足音だけを大きくする設定や影・煙を消す設定もありません。</div>
+  </div>
+</div>
+<div id="touchEdit" hidden><span>ボタンをドラッグして配置</span><button class="btn" id="teReset" type="button">初期配置</button><button class="btn" id="teCancel" type="button">取り消し</button><button class="btn primary" id="teSave" type="button">保存</button></div>
+
+<script>
+  // Startup check: if the game script never starts, say why on the boot screen
+  // (missing css/js folders after an upload, opened as a local file, or the three.js CDN blocked).
+  (function () {
+    function show(msg) {
+      var m = document.getElementById('bootMsg');
+      if (!m) return;
+      m.textContent = msg;
+      m.style.color = '#ff8a7a';
+      m.style.whiteSpace = 'pre-line';
+      m.style.lineHeight = '1.7';
+    }
+    async function diagnose(failed) {
+      if (window.__pier7boot) return;
+      if (location.protocol === 'file:') { show('ファイルを直接開いているため起動できません。\nnpm start のサーバーか GitHub Pages などから開いてください。'); return; }
+      var missing = [];
+      var files = ['css/style.css', 'js/main.js', 'js/game.js', 'js/maps/index.js'];
+      for (var i = 0; i < files.length; i++) {
+        try { var r = await fetch(files[i], { method: 'HEAD', cache: 'no-store' }); if (!r.ok) missing.push(files[i]); } catch (e) { missing.push(files[i]); }
+      }
+      if (missing.length) { show('起動に必要なファイルが見つかりません:\n' + missing.join('\n') + '\n\ncss フォルダと js フォルダ（中の maps フォルダも）を、フォルダの形のままアップロードしてください。'); return; }
+      try { var c = await fetch('https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js', { method: 'HEAD' }); if (!c.ok) throw 0; }
+      catch (e) { show('three.js（cdn.jsdelivr.net）を読み込めませんでした。\nネットワーク接続や広告ブロッカーを確認してください。'); return; }
+      if (failed === true) show('起動に失敗しました。再読み込みしてください。');
+    }
+    window.__pier7fail = diagnose;
+    setTimeout(diagnose, 15000);
+  })();
+</script>
+<script type="module" src="js/main.js" onerror="window.__pier7fail && window.__pier7fail(true)"></script>
+</body>
+</html>
