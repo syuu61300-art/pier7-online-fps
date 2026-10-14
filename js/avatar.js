@@ -142,7 +142,7 @@ export class Avatar {
   sample(now) {
     const s = this.snaps;
     if (!s.length) return;
-    const rt = now - INTERP_DELAY;
+    const rt = now - (this.game.interpDelay || INTERP_DELAY);
     let a = s[0], b = null;
     for (let i = s.length - 1; i >= 0; i--) {
       if (s[i].t <= rt) { a = s[i]; b = s[i + 1] || null; break; }
