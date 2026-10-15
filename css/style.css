@@ -388,3 +388,10 @@ details.more[open] summary { margin-bottom: 10px; }
 @media (prefers-reduced-motion: reduce) {
   .kf, .toast { animation: none; }
 }
+
+/* pause menu: Bot settings (lobby owner) */
+.pbots { display: grid; gap: 8px; padding-top: 10px; border-top: 1px solid var(--line); }
+.pb-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.pb-note { color: var(--muted); font-size: 12px; }
+.seg button:disabled { opacity: 0.45; cursor: not-allowed; }
+#updBtn { border-color: var(--amber); color: var(--amber); }
