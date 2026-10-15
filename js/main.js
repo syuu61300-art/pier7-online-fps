@@ -21,7 +21,9 @@ function slug(s) {
 }
 function newRoomId(name) { return `${slug(name)}-${Math.random().toString(36).slice(2, 6)}`; }
 // shown in the lobby so it is easy to tell whether every device loaded the same files
-const BUILD = '10/15a';
+const BUILD = '10/15b';
+// versions of the other files this main.js expects (only files that changed carry a new number)
+const EXPECT = { net: '10/15a', input: '10/15b', game: '10/15b', proto: 4 };
 function preview(def) { return `linear-gradient(135deg, ${def.theme.preview[0]} 0%, ${def.theme.preview[1]} 100%)`; }
 
 async function start(hotData) {
@@ -77,6 +79,14 @@ async function start(hotData) {
       net.state = 'ok'; net.err = ''; renderNet();
     }
   }, 1000);
+  function staleFiles() {
+    const out = [];
+    if (net.t && net.t.kind === 'mqtt' && net.t.build !== EXPECT.net) out.push('js/net.js');
+    if (game.input.version !== EXPECT.input) out.push('js/input.js');
+    if (game.version !== EXPECT.game) out.push('js/game.js');
+    if (NET_VERSION !== EXPECT.proto) out.push('js/config.js');
+    return out;
+  }
   function renderNet() {
     const el = $('netStatus');
     el.textContent = '';
@@ -84,9 +94,7 @@ async function start(hotData) {
     const txt = document.createElement('span');
     const kindName = net.t ? (net.t.kind === 'claude' ? 'このページのオンライン機能' : net.t.kind === 'mqtt' ? `公開中継サーバー（${net.t.label}）` : 'ゲームサーバー') : '';
     if (net.state === 'ok') {
-      const stale = [];
-      if (net.t && net.t.kind === 'mqtt' && net.t.build !== BUILD) stale.push('js/net.js');
-      if (game.input.version !== BUILD) stale.push('js/input.js');
+      const stale = staleFiles();
       dot.className = stale.length ? 'dot warn' : 'dot ok';
       txt.textContent = stale.length ? `古いファイルが残っています — 少し待ってから開き直してください（${stale.join('・')}）` : `オンライン — ${kindName}に接続中 · ver ${BUILD}`;
     }
@@ -95,6 +103,7 @@ async function start(hotData) {
     else { dot.className = 'dot bad'; txt.textContent = `オンラインに接続できません — ${net.err || ''}`; }
     el.append(dot, txt);
     $('netRetry').hidden = net.state !== 'fail';
+    if (typeof showUpdate === 'function') { try { showUpdate(); } catch {} }
     // create screen: online option state
     const st = $('modeOnlineState');
     st.className = net.state === 'ok' ? '' : net.state === 'fail' || net.state === 'none' ? 'bad' : 'warn';
@@ -104,6 +113,46 @@ async function start(hotData) {
     renderGo();
   }
   $('netRetry').addEventListener('click', () => { net.state = 'idle'; ensureNet().catch(() => {}); });
+
+  // ---------------- updates ----------------
+  // Home-screen web apps (and phone browsers) can keep old files for a long time: look for a
+  // newer main.js now and then, and offer a button that refetches every file and reloads.
+  const updBtn = document.createElement('button');
+  updBtn.type = 'button'; updBtn.className = 'btn sm'; updBtn.id = 'updBtn'; updBtn.hidden = true;
+  $('netRetry').after(updBtn);
+  let latest = null, lastCheck = -1e9;
+  function showUpdate() {
+    const stale = staleFiles().length > 0;
+    updBtn.hidden = !(latest || stale);
+    updBtn.textContent = latest ? `新しい版（${latest}）に更新` : '最新版に更新';
+  }
+  async function checkUpdate(force) {
+    if (!/^https?:$/.test(location.protocol)) return;
+    if (!force && performance.now() - lastCheck < 60000) return;
+    lastCheck = performance.now();
+    try {
+      const r = await fetch(new URL('js/main.js', location.href), { cache: 'no-store' });
+      if (r.ok) {
+        const m = (await r.text()).match(/const BUILD = '([^']+)'/);
+        latest = m && m[1] !== BUILD ? m[1] : null;
+      }
+    } catch {}
+    showUpdate();
+  }
+  async function doUpdate() {
+    updBtn.disabled = true; updBtn.textContent = '更新中…';
+    const urls = new Set([location.href.split('#')[0]]);
+    try {
+      for (const e of performance.getEntriesByType('resource')) {
+        const u = new URL(e.name);
+        if (u.origin === location.origin && /\.(js|css|html?)$/.test(u.pathname)) urls.add(u.href.split('#')[0]);
+      }
+    } catch {}
+    await Promise.all([...urls].map((u) => fetch(u, { cache: 'reload' }).catch(() => {})));
+    location.reload();
+  }
+  updBtn.addEventListener('click', doUpdate);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && game.state !== 'play') checkUpdate(true); });
 
   // ---------------- 2. lobby ----------------
   const nameIn = $('nameIn');
@@ -186,7 +235,8 @@ async function start(hotData) {
       const pr = p.presence || {};
       if (pr.v !== NET_VERSION) continue;
       if (pr.st !== 'play' || typeof pr.rm !== 'string') { idle++; continue; }
-      const g = groups.get(pr.rm) || { rm: pr.rm, rn: '', mp: '', n: 0 };
+      const g = groups.get(pr.rm) || { rm: pr.rm, rn: '', mp: '', n: 0, bc: null };
+      if (Number.isInteger(pr.bc) && pr.bc >= 0 && pr.bc <= 8) g.bc = pr.bc;
       g.n++;
       if (!g.rn && typeof pr.rn === 'string') g.rn = sanitizeText(pr.rn, 24);
       const mp = (pr.m && pr.m.mp) || pr.mp;
@@ -195,7 +245,7 @@ async function start(hotData) {
     }
     const list = [...groups.values()].sort((a, b) => b.n - a.n);
     $('lobbyMeta').textContent = net.state === 'ok' ? `${list.length}件 · 待機中 ${idle}人` : '';
-    const key = net.state + '|' + list.map((g) => `${g.rm}:${g.n}:${g.mp}:${g.rn}`).join('|');
+    const key = net.state + '|' + list.map((g) => `${g.rm}:${g.n}:${g.mp}:${g.rn}:${g.bc}`).join('|');
     if (!force && roomList._key === key) return;
     roomList._key = key;
     roomList.textContent = '';
@@ -213,7 +263,7 @@ async function start(hotData) {
       const pv = document.createElement('span'); pv.className = 'rp'; pv.style.background = preview(def);
       const mid = document.createElement('span'); mid.style.minWidth = '0';
       const n = document.createElement('div'); n.className = 'rn'; n.textContent = g.rn || g.rm;
-      const m = document.createElement('div'); m.className = 'rm'; m.textContent = `${def.name} · ${def.sub}`;
+      const m = document.createElement('div'); m.className = 'rm'; m.textContent = `${def.name} · ${g.bc === null ? def.sub : g.bc ? `Bot ${g.bc}体` : 'Botなし'}`;
       mid.append(n, m);
       const c = document.createElement('span'); c.className = 'rc'; c.textContent = `${g.n}人 · 参加 →`;
       b.append(pv, mid, c);
@@ -231,11 +281,12 @@ async function start(hotData) {
       const playing = game.state === 'play' && game.mode === 'online';
       if (!(playing && net.t.fallback)) {
         net.t.lobby.presence(playing
-          ? { v: NET_VERSION, n: settings.name, st: 'play', rm: game.roomId, rn: String(game.roomName || '').slice(0, 24), mp: game.mapId }
-          : { v: NET_VERSION, n: settings.name, st: 'menu', rm: null, rn: null, mp: null });
+          ? { v: NET_VERSION, n: settings.name, st: 'play', rm: game.roomId, rn: String(game.roomName || '').slice(0, 24), mp: game.mapId, bc: game.isHost ? game.botWant() : null }
+          : { v: NET_VERSION, n: settings.name, st: 'menu', rm: null, rn: null, mp: null, bc: null });
       }
     }
-    if (!$('lobby').hidden) renderLobby(false);
+    if (!$('lobby').hidden) { renderLobby(false); checkUpdate(); }
+    if (!$('pause').hidden) renderPauseBots(false); // e.g. I just became the host
     // relay label can change as relays connect / drop
     if (net.state === 'ok' && net.t && net.t.kind === 'mqtt' && net.t.label !== net._label) { net._label = net.t.label; renderNet(); }
   }, 700);
@@ -293,11 +344,12 @@ async function start(hotData) {
       el.appendChild(b);
     }
   };
-  seg($('segBots'), [0, 1, 2, 3, 4, 5, 6, 8].map((n) => [n, String(n)]), 'botCount', () => renderGo());
+  seg($('segBots'), [0, 1, 2, 3, 4, 5, 6, 8].map((n) => [n, n ? String(n) : 'オフ']), 'botCount', () => renderGo());
+  { const sm = $('modeOnline').querySelector('small'); if (sm) sm.textContent = 'ほかのプレイヤーと対戦。Botを入れるかどうかは、ロビーを作った人が決められます（試合中も一時停止メニューで変更可）。'; }
   seg($('segDiff'), Object.entries(DIFFICULTY).map(([k, v]) => [k, v.label]), 'difficulty', () => { for (const b of game.bots) b.setDifficulty(settings.difficulty); });
   function renderGo() {
     const def = mapDef(settings.map);
-    $('crGoSub').textContent = `${pickMode === 'online' ? 'ONLINE' : 'OFFLINE'} · ${def.name} · BOT × ${settings.botCount}`;
+    $('crGoSub').textContent = `${pickMode === 'online' ? 'ONLINE' : 'OFFLINE'} · ${def.name} · ${settings.botCount ? 'BOT × ' + settings.botCount : 'BOT オフ'}`;
   }
   $('crBack').addEventListener('click', () => { show('lobby'); renderLobby(true); });
   $('crGo').addEventListener('click', () => {
@@ -394,7 +446,7 @@ async function start(hotData) {
       show(null);
       game.input.enabled = true;
       game.interpDelay = (online && net.t && net.t.interpDelay) || 0;
-      await game.start(online ? 'online' : 'offline', room, { roomId: plan.roomId, lobbyName: plan.lobbyName, transport: online ? net.t : null });
+      await game.start(online ? 'online' : 'offline', room, { roomId: plan.roomId, lobbyName: plan.lobbyName, transport: online ? net.t : null, owner: !!plan.create });
     };
     if (touch || game.input.touch || game.input.locked || game.input.freeMouse) { await go(); return; }
     // pointer lock was lost (Esc) — one more click to start
@@ -410,12 +462,63 @@ async function start(hotData) {
     show('lobby'); renderLobby(true);
   });
 
+  // ---------------- pause: Bot settings (offline: always, online: the lobby owner / host) ----------------
+  const pb = document.createElement('div'); pb.className = 'pbots';
+  const pbHead = document.createElement('div'); pbHead.className = 'pb-head';
+  const pbLabel = document.createElement('span'); pbLabel.className = 'label'; pbLabel.textContent = 'Bot';
+  const pbNote = document.createElement('small'); pbNote.className = 'pb-note';
+  pbHead.append(pbLabel, pbNote);
+  const pbCount = document.createElement('div'); pbCount.className = 'seg';
+  const pbDiff = document.createElement('div'); pbDiff.className = 'seg';
+  pb.append(pbHead, pbCount, pbDiff);
+  $('pauseSub').after(pb);
+  // phones: a one-line touch readout, to tell what is wrong when the stick does not respond
+  const tdiag = document.createElement('small'); tdiag.className = 'pb-note tdiag';
+  pb.after(tdiag);
+  function renderTouchDiag() {
+    const D = game.input.tdbg;
+    tdiag.hidden = !game.input.touch || !D;
+    if (tdiag.hidden) return;
+    const st = game.input.tStick;
+    tdiag.textContent = `タッチ診断 ver ${BUILD}: 開始${D.n}回 · スティック移動${D.mv}回 · 最後 ${D.tgt} (${D.x},${D.y}) ${D.why} · 画面 ${D.W}×${D.H}` + (st && st.id >= 0 ? ' · 操作中' : '');
+  }
+  let pbKey = '';
+  function renderPauseBots(force) {
+    if (game.state !== 'play') return;
+    const can = game.canEditBots();
+    const n = game.botWant(), d = game.botDiff();
+    const online = game.mode === 'online';
+    // rebuild only when something changed, so a tap is never lost to a re-render
+    const key = `${can}|${n}|${d}|${online}|${game.isOwner}`;
+    if (!force && key === pbKey) return;
+    pbKey = key;
+    pbNote.textContent = !online ? '' : can ? (game.isOwner ? 'あなたがロビー主です。変更はすぐ全員に反映されます。' : 'ロビー主が抜けたため、いまはあなたがBotを管理しています。')
+      : `ロビー主だけが変更できます（いま: ${n ? n + '体' : 'オフ'}）`;
+    const counts = [0, 2, 4, 6, 8]; if (!counts.includes(n)) { counts.push(n); counts.sort((a, b) => a - b); }
+    pbCount.textContent = '';
+    for (const c of counts) {
+      const b = document.createElement('button'); b.type = 'button'; b.textContent = c ? `${c}体` : 'オフ';
+      b.setAttribute('aria-pressed', String(c === n)); b.disabled = !can;
+      b.addEventListener('click', () => { if (game.setRoomBots(c, game.botDiff())) { save(); renderPauseBots(true); } });
+      pbCount.appendChild(b);
+    }
+    pbDiff.textContent = '';
+    for (const [k, v] of Object.entries(DIFFICULTY)) {
+      const b = document.createElement('button'); b.type = 'button'; b.textContent = v.label;
+      b.setAttribute('aria-pressed', String(k === d)); b.disabled = !can || n === 0;
+      b.addEventListener('click', () => { if (game.setRoomBots(game.botWant(), k)) { save(); renderPauseBots(true); } });
+      pbDiff.appendChild(b);
+    }
+  }
+  game.onRoomBots = () => { if (!$('pause').hidden) renderPauseBots(); };
+
   // ---------------- pause / chat ----------------
   const pause = (on) => {
     if (game.state !== 'play') return;
     game.paused = on;
     $('pause').hidden = !on;
     $('pauseSub').textContent = game.mode === 'online' ? `オンライン · ${game.roomName} — 一時停止中もマッチは続きます。` : 'オフラインのBotマッチ — Botは動き続けます。';
+    if (on) { renderPauseBots(true); renderTouchDiag(); }
     if (!on) { game.input.clear(); game.input.lock(); }
   };
   game.input.onUnlock = () => { if (game.state === 'play') { closeChat(); pause(true); } };
