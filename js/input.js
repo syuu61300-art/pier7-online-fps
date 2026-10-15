@@ -9,7 +9,7 @@ function eachTouch(list, fn) {
 
 export class Input {
   constructor(canvas, touchRoot, settings) {
-    this.version = '10/15a'; // checked by main.js to spot stale cached files
+    this.version = '10/15b'; // checked by main.js to spot stale cached files
     this.canvas = canvas;
     this.settings = settings;
     this.keys = new Set();
@@ -157,7 +157,14 @@ export class Input {
     // touch still counts when it lands on the canvas or the HUD (e.g. under a notch or after a
     // home-screen web app resized the page).
     const skip = (el) => !!(el && el.closest && el.closest('.tbtn, .overlay, .modal, .screen, #chatbox, #touchEdit, input, select, textarea, button, a'));
+    this.tdbg = { n: 0, mv: 0, tgt: '-', x: 0, y: 0, W: 0, H: 0, why: '' };
     document.addEventListener('touchstart', (e) => {
+      const t0 = e.changedTouches && e.changedTouches[0], el = e.target || {};
+      const D = this.tdbg; D.n++;
+      D.tgt = (el.id ? '#' + el.id : el.className && typeof el.className === 'string' ? '.' + el.className.split(' ')[0] : el.tagName || '?');
+      if (t0) { D.x = Math.round(t0.clientX); D.y = Math.round(t0.clientY); }
+      const sz = this._size(); D.W = Math.round(sz.W); D.H = Math.round(sz.H);
+      D.why = !this.enabled ? 'off' : this.editing ? 'edit' : !root.classList.contains('on') ? 'layer' : skip(e.target) ? 'ui' : 'ok';
       if (!this.enabled || this.editing) return;
       if (!this.touch) { this.touch = true; this.applyTouchLayout(); }
       if (!root.classList.contains('on') || skip(e.target)) return;
@@ -183,7 +190,7 @@ export class Input {
       const k = 1.6 * this.settings.touchSens;
       let used = false;
       eachTouch(e.changedTouches, (t) => {
-        if (t.identifier === this.tStick.id) { this.tStick.x = t.clientX; this.tStick.y = t.clientY; used = true; }
+        if (t.identifier === this.tStick.id) { this.tStick.x = t.clientX; this.tStick.y = t.clientY; used = true; this.tdbg.mv++; }
         if (t.identifier === this.tLook.id) {
           this.mdx += (t.clientX - this.tLook.x) * k; this.mdy += (t.clientY - this.tLook.y) * k;
           this.tLook.x = t.clientX; this.tLook.y = t.clientY; used = true;
