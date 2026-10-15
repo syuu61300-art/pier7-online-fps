@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { NET_VERSION, PLAYER, MATCH, WEAPONS, WEAPON_CODES, PRIMARIES, GRENADE, COLORS, MELEE_BASH, ZONE_HEAD, ZONE_LIMB } from './config.js';
+import { NET_VERSION, PLAYER, MATCH, WEAPONS, WEAPON_CODES, PRIMARIES, GRENADE, COLORS, MELEE_BASH, ZONE_HEAD, ZONE_LIMB, DIFFICULTY } from './config.js';
 import { buildMap, mapDef, MAP_IDS, DEFAULT_MAP } from './maps/index.js';
 import { sharedTextures } from './maps/builder.js';
 import { NavGrid } from './nav.js';
@@ -73,6 +73,9 @@ export class Game {
     this.hostId = 'me';
     this.lastHostPres = null;
     this.myId = 'me';
+    this.version = '10/15b';  // checked by main.js to spot stale cached files
+    this.isOwner = false;     // created this online lobby ("server owner"): hosts it while present
+    this.roomBots = null;     // online: { n, d } bots in this lobby, set by the owner / host
     this.room = null;
     this.transport = null;
     this.blips = new Map();
@@ -214,6 +217,8 @@ export class Game {
     this.roomId = this.mode === 'online' ? info.roomId || null : null;
     this.roomName = this.mode === 'online' ? info.lobbyName || info.roomId || 'ロビー' : null;
     this.myId = this.room.myId || 'me';
+    this.isOwner = this.mode === 'online' && !!info.owner;
+    this.roomBots = this.mode === 'online' && !info.owner ? null : { n: clamp(S.botCount | 0, 0, 8), d: DIFFICULTY[S.difficulty] ? S.difficulty : 'normal' };
     this.state = 'play';
     this.kills = 0; this.deaths = 0;
     this.round = 0;
@@ -880,6 +885,7 @@ export class Game {
     const peers = room.peers();
     const seen = new Set();
     let hostCandidate = this.myId;
+    let ownerCandidate = this.isOwner ? this.myId : null;
     for (const peer of peers) {
       if (peer.me) continue;
       const pr = peer.presence || {};
@@ -898,6 +904,7 @@ export class Game {
       }
       rec.inGame = inGame;
       if (inGame && id < hostCandidate) hostCandidate = id;
+      if (inGame && pr.ow === 1 && (ownerCandidate === null || id < ownerCandidate)) ownerCandidate = id;
       if (pr === rec.lastPres) continue;
       rec.lastPres = pr;
       if (!inGame) { rec.avatar.setFlags(0); continue; }
@@ -932,8 +939,8 @@ export class Game {
         }
       }
     }
-    // ---- host election (lowest id among in-game peers, me included) ----
-    const newHost = hostCandidate;
+    // ---- host election: the lobby owner while present, else the lowest id (me included) ----
+    const newHost = ownerCandidate !== null ? ownerCandidate : hostCandidate;
     if (newHost !== this.hostId) {
       const wasHost = this.isHost;
       this.hostId = newHost;
@@ -962,6 +969,32 @@ export class Game {
     this.onMapChanged && this.onMapChanged(id);
   }
 
+  // how many bots this match has: offline = my settings, online = the lobby's setting
+  botWant() {
+    if (this.mode !== 'online') return clamp(this.settings.botCount | 0, 0, 8);
+    return this.roomBots ? clamp(this.roomBots.n | 0, 0, 8) : 0; // not known yet (just joined)
+  }
+  botDiff() {
+    const d = this.mode === 'online' && this.roomBots ? this.roomBots.d : this.settings.difficulty;
+    return DIFFICULTY[d] ? d : 'normal';
+  }
+  // offline: always; online: only the host (the lobby owner while they are in the match)
+  canEditBots() { return this.state === 'play' && (this.mode !== 'online' || this.isHost); }
+  setRoomBots(n, d) {
+    if (!this.canEditBots()) return false;
+    n = clamp(n | 0, 0, 8);
+    d = DIFFICULTY[d] ? d : this.botDiff();
+    const changed = !this.roomBots || this.roomBots.n !== n || this.roomBots.d !== d;
+    this.roomBots = { n, d };
+    this.settings.botCount = n; this.settings.difficulty = d;
+    for (const b of this.bots) b.setDifficulty(d);
+    if (this.isHost) this._ensureBots(null);
+    this._sendPresence(true);
+    if (changed) this.hud.chat('', '', n ? `Botを${n}体にしました（${DIFFICULTY[d].label}）` : 'Botをオフにしました', true);
+    this.onRoomBots && this.onRoomBots();
+    return true;
+  }
+
   _becomeHost() {
     // adopt the previous host's bots (positions, scores) if we saw them
     const prev = this.lastHostPres;
@@ -976,10 +1009,10 @@ export class Game {
   }
 
   _ensureBots(seed) {
-    const want = clamp(this.settings.botCount | 0, 0, 8);
+    const want = this.botWant();
     while (this.bots.length > want) this.bots.pop().dispose();
     for (let i = this.bots.length; i < want; i++) {
-      const b = new Bot(this, i, this.settings.difficulty);
+      const b = new Bot(this, i, this.botDiff());
       const s = seed && seed.find((x) => x[0] === i);
       if (s && vec3ok([s[1], s[2], s[3]])) {
         b.body.x = s[1]; b.body.y = s[2]; b.body.z = s[3]; b.yaw = s[4] || 0;
@@ -997,6 +1030,15 @@ export class Game {
     // everyone plays on the host's map
     if (typeof m.mp === 'string' && m.mp !== this.mapId && MAP_IDS.includes(m.mp)) this._switchMap(m.mp);
     if (isNum(m.r) && m.r !== this.round) this._newRound(m.r);
+    if (isNum(m.bc)) {
+      const n = clamp(m.bc | 0, 0, 8), d = DIFFICULTY[m.bd] ? m.bd : 'normal';
+      const rb = this.roomBots;
+      if (!rb || rb.n !== n || rb.d !== d) {
+        if (rb) this.hud.chat('', '', n ? `ロビー主がBotを${n}体にしました（${DIFFICULTY[d].label}）` : 'ロビー主がBotをオフにしました', true);
+        this.roomBots = { n, d };
+        this.onRoomBots && this.onRoomBots();
+      }
+    }
     if (isNum(m.tl)) this.matchEnd = now + clamp(m.tl, 0, MATCH.duration + 5000);
     const st = m.s ? 'end' : 'play';
     if (isNum(m.e)) this.interEnd = now + clamp(m.e, 0, MATCH.intermission + 2000);
@@ -1034,9 +1076,10 @@ export class Game {
       f: p.flags(), w: p.weapon.id, k: this.kills, d: this.deaths, r: this.round,
       ev: this.events.map(({ at, ...rest }) => rest),
       rm: this.roomId, rn: this.roomName ? String(this.roomName).slice(0, 24) : null, mp: this.mapId,
+      ow: this.isOwner ? 1 : 0,
     };
     if (this.isHost) {
-      pres.m = { r: this.round, tl: Math.max(0, Math.round(this.matchEnd - now)), s: this.matchState === 'end' ? 1 : 0, e: Math.max(0, Math.round(this.interEnd - now)), mp: this.mapId };
+      pres.m = { r: this.round, tl: Math.max(0, Math.round(this.matchEnd - now)), s: this.matchState === 'end' ? 1 : 0, e: Math.max(0, Math.round(this.interEnd - now)), mp: this.mapId, bc: this.botWant(), bd: this.botDiff() };
       pres.b = this.bots.map((bt) => [bt.index, r2(bt.body.x), r2(bt.body.y), r2(bt.body.z), r3(bt.yaw), r3(bt.pitch), bt.flags(), bt.weapon.id, bt.kills, bt.deaths]);
     } else { pres.m = null; pres.b = null; }
     const enc = this._enc || (this._enc = new TextEncoder());
@@ -1263,7 +1306,12 @@ export class Game {
 
     // bots (host)
     if (this.isHost) {
-      if (this.bots.length !== clamp(this.settings.botCount | 0, 0, 8)) this._ensureBots(null);
+      // a lobby nobody else is hosting: I am its host now, so my own Bot choice applies
+      if (this.mode === 'online' && !this.roomBots && this.time - this.startTime > 1.5) {
+        this.roomBots = { n: clamp(this.settings.botCount | 0, 0, 8), d: DIFFICULTY[this.settings.difficulty] ? this.settings.difficulty : 'normal' };
+        this.onRoomBots && this.onRoomBots();
+      }
+      if (this.bots.length !== this.botWant()) this._ensureBots(null);
       for (const b of this.bots) b.update(dt);
     }
     // remote avatars
