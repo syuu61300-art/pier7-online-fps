@@ -1,5 +1,5 @@
 // ===== PIER 7 — game constants =====
-export const NET_VERSION = 3;
+export const NET_VERSION = 4;
 
 export const PLAYER = {
   radius: 0.3,
